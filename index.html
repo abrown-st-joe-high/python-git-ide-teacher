@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chatbox IDE Pythit - Instructor</title>
+<style>
+:root{--bg:#1b1c23;--pn:#252732;--ln:#3a3d4d;--tx:#e6e6ef;--mu:#8b8fa3;--ac:#4f9cf9;--er:#ff6b6b;--ok:#6bd68b;--mono:ui-monospace,Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--tx);font:14px system-ui,sans-serif}
+body{display:flex;flex-direction:column}
+header{display:flex;gap:8px;align-items:center;padding:8px 12px;background:var(--pn);border-bottom:1px solid var(--ln);flex-wrap:wrap}
+button{background:#33364a;color:var(--tx);border:1px solid var(--ln);border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit}
+button:hover:not(:disabled){background:#40445c}button:disabled{opacity:.4;cursor:default}
+button.pri{background:#2d7d46;border-color:#2d7d46}
+input[type=text],select{background:var(--bg);color:var(--tx);border:1px solid var(--ln);border-radius:6px;padding:6px 10px;font:inherit}
+.sp{flex:1}#stat{color:var(--mu);font-size:12px}#stat.bad{color:var(--er);cursor:pointer;text-decoration:underline}
+#main{flex:1;min-height:0;display:grid;grid-template-columns:270px 230px 1fr}
+#main>*{min-width:0;min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--ln)}
+.h{padding:6px 10px;background:#20222c;color:var(--mu);font-size:12px;border-bottom:1px solid var(--ln)}
+.scroll{flex:1;overflow:auto}
+.ph{position:sticky;top:0;padding:5px 10px;background:#2b2e3d;color:var(--ac);font-size:12px;font-weight:600;border-bottom:1px solid var(--ln)}
+.it{padding:7px 10px;cursor:pointer;border-bottom:1px solid #2a2c38}
+.it:hover{background:#2c2f3c}.it.on{background:#33405e}
+.it small{display:block;color:var(--mu);font:11px var(--mono)}
+.fi{font-family:var(--mono);font-size:13px;display:flex;justify-content:space-between;gap:8px}
+.fi small{display:inline;margin:0}
+#info{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 10px;background:#20222c;border-bottom:1px solid var(--ln)}
+#info b{font-size:15px}#info span{color:var(--mu)}
+.cv{flex:1;overflow:auto;display:flex;align-items:flex-start;background:var(--pn)}
+.cv pre{margin:0;font:14px/20px var(--mono);padding:8px 0 20px}
+.gt{position:sticky;left:0;min-width:46px;padding-right:8px!important;text-align:right;color:var(--mu);background:#20222c;border-right:1px solid var(--ln);user-select:none}
+.cd{padding-left:10px!important;white-space:pre;tab-size:4;flex:1}
+.empty{padding:20px;color:var(--mu);line-height:1.5}
+body.drag::after{content:"Drop files here";position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font-size:28px;background:rgba(79,156,249,.25);pointer-events:none}
+@media(max-width:900px){#main{display:flex;flex-direction:column}#main>*{flex:1}}
+</style></head><body>
+<header>
+<b>Chatbox IDE Pythit · Instructor</b>
+<button id="pick" class="pri">📂 Load JSON files or a zip</button>
+<input type="file" id="fi" accept=".json,.zip,application/json,application/zip" multiple hidden>
+<input type="text" id="q" placeholder="Search students…" autocomplete="off" spellcheck="false">
+<button id="clr">Clear all</button>
+<span class="sp"></span><span id="stat">Nothing loaded yet</span>
+</header>
+<div id="main">
+<section><div class="h">Students (by class period)</div><div class="scroll" id="stu"></div></section>
+<section><div class="h">Programs</div><div class="scroll" id="fl"></div></section>
+<section><div id="info"></div><div class="cv" id="cv"></div></section>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const PER={a_first1:'First (1st)',b_second2:'Second (2nd)',c_third3:'Third (3rd)',d_fourth4:'Fourth (4th)',e_fifth5:'Fifth (5th)',f_sixth6:'Sixth (6th)',g_seventh7:'Seventh (7th)'};
+const UNK='zzz_unknown';
+
+/* ---------- reading zips (no libraries) ---------- */
+async function readZip(buf){
+  const dv=new DataView(buf),u8=new Uint8Array(buf);
+  let e=-1;
+  for(let i=buf.byteLength-22;i>=Math.max(0,buf.byteLength-65557);i--){if(dv.getUint32(i,true)==0x06054b50){e=i;break}}
+  if(e<0)throw new Error('not a valid zip file');
+  const n=dv.getUint16(e+10,true);let p=dv.getUint32(e+16,true);const out=[];
+  for(let k=0;k<n;k++){
+    if(dv.getUint32(p,true)!=0x02014b50)throw new Error('damaged zip directory');
+    const meth=dv.getUint16(p+10,true),csz=dv.getUint32(p+20,true),nl=dv.getUint16(p+28,true),xl=dv.getUint16(p+30,true),cl=dv.getUint16(p+32,true),off=dv.getUint32(p+42,true);
+    const name=new TextDecoder().decode(u8.subarray(p+46,p+46+nl));
+    p+=46+nl+xl+cl;
+    if(name.endsWith('/'))continue;
+    if(csz==0xFFFFFFFF||off==0xFFFFFFFF)throw new Error('zip64 files are not supported');
+    const ds=off+30+dv.getUint16(off+26,true)+dv.getUint16(off+28,true),raw=u8.subarray(ds,ds+csz);
+    if(meth==0)out.push({name,data:raw});
+    else if(meth==8){
+      const s=new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      out.push({name,data:new Uint8Array(await new Response(s).arrayBuffer())})}}
+  return out}
+
+/* ---------- reading a Pythit save ---------- */
+function norm(d,src){
+  if(!d||typeof d!='object')throw new Error('not a Pythit save');
+  const fl=v=>(Array.isArray(v)?v:[]).filter(f=>f&&typeof f=='object').map(f=>({name:String(f.name||'(unnamed)'),code:String(f.content??f.code??'')}));
+  let files=[];
+  if(Array.isArray(d.projects)&&d.projects.length){
+    const multi=d.projects.length>1;
+    d.projects.forEach(p=>fl(p&&p.files).forEach(f=>files.push({label:multi?(p.name||'project')+' / '+f.name:f.name,code:f.code})))}
+  else files=fl(d.files).map(f=>({label:f.name,code:f.code}));
+  if(!files.length&&!d.submission)throw new Error('no files found in it');
+  const s=d.submission&&typeof d.submission=='object'?d.submission:{};
+  return{period:s.period||UNK,first:String(s.firstName||''),last:String(s.lastName||''),user:String(s.username||''),at:Date.parse(s.submittedAt)||0,src,files}}
+function group(subs){
+  const m=new Map();
+  for(const s of subs){
+    const id=(s.user||(s.first+' '+s.last).trim()||s.src).toLowerCase(),k=s.period+'|'+id;
+    if(!m.has(k))m.set(k,{key:k,period:s.period,subs:[]});
+    m.get(k).subs.push(s)}
+  const st=[...m.values()];
+  st.forEach(x=>{x.subs.sort((a,b)=>b.at-a.at);const s=x.subs[0];x.first=s.first;x.last=s.last;x.user=s.user;x.src=s.src});
+  const nm=x=>(x.last||x.src).toLowerCase();
+  st.sort((a,b)=>a.period.localeCompare(b.period)||nm(a).localeCompare(nm(b))||a.first.toLowerCase().localeCompare(b.first.toLowerCase()));
+  return st}
+const pLabel=k=>PER[k]||(k==UNK?'No submission info':k);
+const dName=x=>x.last?`${x.last}, ${x.first}`:(x.first||x.src);
+/*UI*/
+let subs=[],st=[],sel=null,vi=0,fi=0,errs=[];
+const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
+const when=s=>s.at?new Date(s.at).toLocaleString():'(no date)';
+const cur=()=>st.find(x=>x.key==sel);
+function visible(){
+  const q=$('q').value.trim().toLowerCase();
+  return st.filter(x=>!q||(dName(x)+' '+x.user+' '+x.first+' '+x.last).toLowerCase().includes(q))}
+function rebuild(){
+  st=group(subs);
+  if(!cur())sel=st.length?st[0].key:null;
+  vi=0;fi=0;render()}
+function render(){renderStu();renderFiles();renderInfo();renderCode();renderStat()}
+function renderStat(){
+  const s=$('stat');
+  s.className=errs.length?'bad':'';
+  s.textContent=subs.length?`${subs.length} submission${subs.length==1?'':'s'} from ${st.length} student${st.length==1?'':'s'}`+(errs.length?` · ${errs.length} skipped (click for details)`:''):(errs.length?`${errs.length} skipped (click for details)`:'Nothing loaded yet');
+  s.onclick=errs.length?()=>alert('Skipped:\n\n'+errs.join('\n')):null}
+function renderStu(){
+  const box=$('stu');box.innerHTML='';
+  const list=visible();
+  if(!list.length){box.append(el('div','empty',subs.length?'No students match your search.':'Load your students’ downloaded .json files (select many at once) or a single .zip of them, using the green button above. You can also drag and drop them onto this page.'));return}
+  const counts={};list.forEach(x=>{counts[x.period]=(counts[x.period]||0)+1});
+  let last=null;
+  for(const x of list){
+    if(x.period!==last){last=x.period;box.append(el('div','ph',`${pLabel(x.period)} (${counts[x.period]})`))}
+    const d=el('div','it'+(x.key==sel?' on':''),dName(x));
+    d.append(el('small','',(x.user||'no username')+(x.subs.length>1?` · ${x.subs.length} submissions`:'')));
+    d.onclick=()=>{sel=x.key;vi=0;fi=0;render()};
+    box.append(d)}}
+function renderFiles(){
+  const box=$('fl');box.innerHTML='';
+  const x=cur();
+  if(!x){box.append(el('div','empty','Pick a student.'));return}
+  if(x.subs.length>1){
+    const s=el('select');s.style.cssText='margin:8px;width:calc(100% - 16px)';
+    x.subs.forEach((u,i)=>{const o=el('option','',(i==0?'Latest · ':'')+when(u));o.value=i;s.append(o)});
+    s.value=vi;s.onchange=()=>{vi=+s.value;fi=0;renderFiles();renderInfo();renderCode()};
+    box.append(s)}
+  const sub=x.subs[vi];
+  if(!sub.files.length)box.append(el('div','empty','This submission has no programs.'));
+  sub.files.forEach((f,i)=>{
+    const d=el('div','it fi'+(i==fi?' on':''));
+    d.append(el('span','',f.label));
+    d.append(el('small','',f.code.split('\n').length+' lines'));
+    d.onclick=()=>{fi=i;renderFiles();renderCode()};
+    box.append(d)})}
+function renderInfo(){
+  const b=$('info');b.innerHTML='';
+  const x=cur();if(!x)return;
+  const sub=x.subs[vi];
+  b.append(el('b','',dName(x)));
+  b.append(el('span','',`${x.user||'no username'} · ${pLabel(x.period)} · submitted ${when(sub)}`));
+  const sp=el('span');sp.style.flex='1';b.append(sp);
+  const mk=(t,fn)=>{const e=el('button','',t);e.onclick=fn;b.append(e)};
+  mk('◀ Prev student',()=>nav(-1));mk('Next student ▶',()=>nav(1));
+  mk('Copy code',async()=>{const f=sub.files[fi];if(f)try{await navigator.clipboard.writeText(f.code)}catch(e){alert('Could not copy')}})}
+function renderCode(){
+  const cv=$('cv');cv.innerHTML='';
+  const x=cur(),f=x&&x.subs[vi].files[fi];
+  if(!f){cv.append(el('div','empty',x?'Select a program.':''));return}
+  const lines=f.code.split('\n').length;
+  cv.append(el('pre','gt',Array.from({length:lines},(_,i)=>i+1).join('\n')));
+  cv.append(el('pre','cd',f.code))}
+function nav(d){
+  const l=visible(),i=l.findIndex(x=>x.key==sel),n=l[Math.min(l.length-1,Math.max(0,i+d))];
+  if(n){sel=n.key;vi=0;fi=0;render()}}
+async function loadFiles(list){
+  for(const f of list){
+    try{
+      const items=[];
+      if(/\.zip$/i.test(f.name)){
+        if(typeof DecompressionStream=='undefined')throw new Error("this browser can't open zip files - unzip it and load the .json files instead");
+        for(const e of await readZip(await f.arrayBuffer())){
+          if(/\.json$/i.test(e.name)&&!/(^|\/)(__MACOSX|\.)/.test(e.name)){
+            try{items.push([JSON.parse(new TextDecoder().decode(e.data)),e.name])}
+            catch(x){errs.push(`${f.name} → ${e.name}: not valid JSON`)}}}}
+      else items.push([JSON.parse(await f.text()),f.name]);
+      for(const[d,n]of items){
+        try{
+          const s=norm(d,n),id=s.src+'|'+s.at+'|'+s.user;
+          if(!subs.some(o=>o.src+'|'+o.at+'|'+o.user==id))subs.push(s)}
+        catch(x){errs.push(n+': '+x.message)}}}
+    catch(x){errs.push(f.name+': '+x.message)}}
+  rebuild()}
+$('pick').onclick=()=>$('fi').click();
+$('fi').onchange=e=>{const l=[...e.target.files];e.target.value='';loadFiles(l)};
+$('q').oninput=()=>{renderStu()};
+$('clr').onclick=()=>{if(!subs.length&&!errs.length)return;if(confirm('Clear everything that is loaded?')){subs=[];errs=[];sel=null;rebuild()}};
+addEventListener('dragover',e=>{e.preventDefault();document.body.classList.add('drag')});
+addEventListener('dragleave',e=>{if(!e.relatedTarget)document.body.classList.remove('drag')});
+addEventListener('drop',e=>{e.preventDefault();document.body.classList.remove('drag');loadFiles([...e.dataTransfer.files])});
+addEventListener('keydown',e=>{
+  if(/INPUT|SELECT|TEXTAREA/.test(e.target.tagName))return;
+  if(e.key=='ArrowDown'||e.key=='ArrowUp'){e.preventDefault();nav(e.key=='ArrowDown'?1:-1)}
+  else if(e.key=='ArrowRight'||e.key=='ArrowLeft'){
+    const x=cur();if(!x)return;
+    const n=x.subs[vi].files.length,j=fi+(e.key=='ArrowRight'?1:-1);
+    if(j>=0&&j<n){fi=j;renderFiles();renderCode()}}});
+render();
+</script></body></html>
