@@ -29,6 +29,16 @@ input[type=text],select{background:var(--bg);color:var(--tx);border:1px solid va
 .gt{position:sticky;left:0;min-width:46px;padding-right:8px!important;text-align:right;color:var(--mu);background:#20222c;border-right:1px solid var(--ln);user-select:none}
 .cd{padding-left:10px!important;white-space:pre;tab-size:4;flex:1}
 .empty{padding:20px;color:var(--mu);line-height:1.5}
+#cmp{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:10}
+#cmp .panel{width:min(900px,94vw);height:min(80vh,800px);background:var(--bg);border:1px solid var(--ln);border-radius:10px;display:flex;flex-direction:column;overflow:hidden}
+.ph2{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 12px;background:var(--pn);border-bottom:1px solid var(--ln)}
+.ph2 label{font-size:12px;color:var(--mu);display:flex;gap:6px;align-items:center}
+#cmpbody{padding:12px}
+.sum{color:var(--mu);margin-bottom:10px}.ok{color:var(--ok);font-weight:600}.warn{color:var(--er);font-weight:600;margin-bottom:10px}
+.grp{border:1px solid var(--ln);border-radius:8px;margin-bottom:12px;overflow:hidden}
+.gh{padding:7px 10px;background:#2b2e3d;font-weight:600}
+.ge{padding:6px 10px;cursor:pointer;border-top:1px solid #2a2c38;font-family:var(--mono);font-size:13px}.ge:hover{background:#2c2f3c}
+.pv{margin:0;padding:8px 10px;background:var(--pn);border-top:1px solid var(--ln);font:12px/1.4 var(--mono);color:var(--mu);overflow:auto}
 body.drag::after{content:"Drop files here";position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font-size:28px;background:rgba(79,156,249,.25);pointer-events:none}
 @media(max-width:900px){#main{display:flex;flex-direction:column}#main>*{flex:1}}
 </style></head><body>
@@ -37,7 +47,7 @@ body.drag::after{content:"Drop files here";position:fixed;inset:0;display:flex;a
 <button id="pick" class="pri">📂 Load JSON files or a zip</button>
 <input type="file" id="fi" accept=".json,.zip,application/json,application/zip" multiple hidden>
 <input type="text" id="q" placeholder="Search students…" autocomplete="off" spellcheck="false">
-<button id="clr">Clear all</button>
+<button id="clr">Clear all</button><button id="cmpb">🔍 Compare code</button>
 <span class="sp"></span><span id="stat">Nothing loaded yet</span>
 </header>
 <div id="main">
@@ -45,6 +55,11 @@ body.drag::after{content:"Drop files here";position:fixed;inset:0;display:flex;a
 <section><div class="h">Programs</div><div class="scroll" id="fl"></div></section>
 <section><div id="info"></div><div class="cv" id="cv"></div></section>
 </div>
+<div id="cmp" hidden><div class="panel">
+<div class="ph2"><b>Compare code</b>
+<label>Ignore file names (comma separated) <input type="text" id="ign" value="HelloWorld.py" autocomplete="off" spellcheck="false"></label>
+<button id="cmprun" class="pri">Run again</button><button id="cmpcopy">Copy report</button><span class="sp"></span><button id="cmpx">✕ Close</button></div>
+<div id="cmpbody" class="scroll"></div></div></div>
 <script>
 const $=id=>document.getElementById(id);
 const PER={a_first1:'First (1st)',b_second2:'Second (2nd)',c_third3:'Third (3rd)',d_fourth4:'Fourth (4th)',e_fifth5:'Fifth (5th)',f_sixth6:'Sixth (6th)',g_seventh7:'Seventh (7th)'};
@@ -96,6 +111,19 @@ function group(subs){
   return st}
 const pLabel=k=>PER[k]||(k==UNK?'No submission info':k);
 const dName=x=>x.last?`${x.last}, ${x.first}`:(x.first||x.src);
+function findMatches(st,ignore){
+  const ig=new Set(ignore.map(x=>x.trim().toLowerCase()).filter(Boolean));
+  const m=new Map();let checked=0,skipped=0;
+  for(const x of st){
+    x.subs[0].files.forEach((f,i)=>{
+      const base=f.label.split(' / ').pop().toLowerCase();
+      if(ig.has(base)||!f.code.trim()){skipped++;return}
+      checked++;
+      if(!m.has(f.code))m.set(f.code,[]);
+      m.get(f.code).push({x,i,label:f.label})})}
+  const groups=[...m].map(([code,e])=>({code,e})).filter(g=>new Set(g.e.map(o=>o.x.key)).size>1);
+  groups.sort((a,b)=>b.e.length-a.e.length||b.code.length-a.code.length);
+  return{groups,checked,skipped,students:st.length}}
 /*UI*/
 let subs=[],st=[],sel=null,vi=0,fi=0,errs=[];
 const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
@@ -195,5 +223,41 @@ addEventListener('keydown',e=>{
     const x=cur();if(!x)return;
     const n=x.subs[vi].files.length,j=fi+(e.key=='ArrowRight'?1:-1);
     if(j>=0&&j<n){fi=j;renderFiles();renderCode()}}});
+
+/* ---------- compare code ---------- */
+let cmpRes=null;
+function runCompare(){
+  const body=$('cmpbody');body.innerHTML='';
+  if(!st.length){body.append(el('div','empty','Load some submissions first.'));cmpRes=null;return}
+  const r=cmpRes=findMatches(st,$('ign').value.split(','));
+  body.append(el('div','sum',`Compared the latest submission from ${r.students} student${r.students==1?'':'s'}: ${r.checked} program${r.checked==1?'':'s'} checked, ${r.skipped} skipped (ignored names or empty files).`));
+  if(!r.groups.length){body.append(el('div','ok','✔ No exact matches found between different students.'));return}
+  body.append(el('div','warn',`⚠ ${r.groups.length} group${r.groups.length==1?'':'s'} of identical code found.`));
+  r.groups.forEach((g,n)=>{
+    const people=new Set(g.e.map(o=>o.x.key)).size,lines=g.code.split('\n');
+    const box=el('div','grp');
+    box.append(el('div','gh',`Match ${n+1}: ${people} students · ${lines.length} line${lines.length==1?'':'s'} · ${g.code.length} characters`));
+    g.e.forEach(o=>{
+      const d=el('div','ge',`${pLabel(o.x.period)} · ${dName(o.x)} (${o.x.user||'no username'}) — ${o.label}`);
+      d.title='Open this program';
+      d.onclick=()=>{sel=o.x.key;vi=0;fi=o.i;$('cmp').hidden=true;render()};
+      box.append(d)});
+    box.append(el('pre','pv',lines.slice(0,6).join('\n')+(lines.length>6?'\n…':'')));
+    body.append(box)})}
+function reportText(){
+  if(!cmpRes)return '';
+  const r=cmpRes,out=[`Code comparison: ${r.students} students, ${r.checked} programs checked, ${r.skipped} skipped`,''];
+  if(!r.groups.length)out.push('No exact matches found.');
+  r.groups.forEach((g,n)=>{
+    out.push(`Match ${n+1} (${g.code.split('\n').length} lines):`);
+    g.e.forEach(o=>out.push(`  - ${pLabel(o.x.period)} | ${dName(o.x)} (${o.x.user||'no username'}) | ${o.label}`));
+    out.push('')});
+  return out.join('\n')}
+$('cmpb').onclick=()=>{$('cmp').hidden=false;runCompare()};
+$('cmpx').onclick=()=>{$('cmp').hidden=true};
+$('cmprun').onclick=runCompare;
+$('ign').onkeydown=e=>{if(e.key=='Enter')runCompare()};
+$('cmpcopy').onclick=async()=>{try{await navigator.clipboard.writeText(reportText());alert('Report copied.')}catch(e){alert('Could not copy')}};
+$('cmp').onclick=e=>{if(e.target==$('cmp'))$('cmp').hidden=true};
 render();
 </script></body></html>
